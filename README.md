@@ -15,3 +15,7 @@ There may be risk of loss of a few records that cross the split boundary. This a
 For large scale analytics applications, this risk may be acceptable.
 
 Best to include the escaping rules in the ingestion process to begin with.
+
+## Usage
+
+    hadoop jar lib/csvfix-assembly-1.0-SNAPSHOT.jar App <isZip: 0|1> <outputCompression: snappy|gzip> <inputPath> <outputPath> <startDate e.g. "2016-02-01"> <endDate (exclusive)>
