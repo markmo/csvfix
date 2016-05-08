@@ -2,7 +2,10 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.NullWritable;
 import org.apache.hadoop.io.Text;
+import org.apache.hadoop.io.compress.GzipCodec;
+import org.apache.hadoop.io.compress.SnappyCodec;
 import org.apache.hadoop.mapreduce.Job;
 import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.input.CSVLineRecordReader;
@@ -35,7 +38,7 @@ public class App extends Configured implements Tool {
         INVALID_COLUMN_COUNT
     }
 
-    public static class MapTask extends Mapper<LongWritable, List<Text>, LongWritable, Text> {
+    public static class MapTask extends Mapper<LongWritable, List<Text>, NullWritable, Text> {
 
         private static final String quote = "\"";
         private static final String delim = ",";
@@ -85,7 +88,7 @@ public class App extends Configured implements Tool {
 
                 context.getCounter(LineCounter.NUMBER_LINES).increment(1);
 
-                context.write(key, join(strings));
+                context.write(NullWritable.get(), join(strings));
 
             } else {
                 context.getCounter(LineCounter.INVALID_COLUMN_COUNT).increment(1);
@@ -125,13 +128,23 @@ public class App extends Configured implements Tool {
     public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
         logger.info("Starting job");
 
+        boolean isZip = "1".equals(args[1]);
+        logger.info("isZip: " + isZip);
+
+        String outputCompression = args[2];
+        logger.info("output compression: " + outputCompression);
+
         Configuration conf = new Configuration();
         conf.set(CSVLineRecordReader.FORMAT_DELIMITER, "\"");
         conf.set(CSVLineRecordReader.FORMAT_SEPARATOR, ",");
         conf.setInt(CSVNLineInputFormat.LINES_PER_MAP, 40000);
-        conf.setBoolean(CSVLineRecordReader.IS_ZIPFILE, false);
+        conf.setBoolean(CSVLineRecordReader.IS_ZIPFILE, isZip);
         conf.set(CSVLineRecordReader.VALID_LINE_START_PATTERN, "-?\\d+,");
         conf.setInt(CSVLineRecordReader.EXPECTED_COLUMN_COUNT, 11);
+
+//        conf.setBoolean("mapreduce.map.output.compress", true);
+//        conf.set("mapreduce.map.output.compress.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+//        conf.set("mapreduce.output.fileoutputformat.compress.codec", "org.apache.hadoop.io.compress.SnappyCodec");
 //        conf.set("mapreduce.map.java.opts", "-Xms256m -Xmx8g -XX:-UseConcMarkSweepGC -XX:-UseGCOverheadLimit");
 //        conf.set("mapreduce.map.memory.mb", "8192");
 
@@ -151,13 +164,24 @@ public class App extends Configured implements Tool {
 
         job.setOutputFormatClass(TextOutputFormat.class);
 
-        String inputPath = args[1];
-        String outputPath = args[2];
+        String inputPath = args[3];
+        String outputPath = args[4];
 
-        if (args.length == 3) {
+        logger.info("input path: " + inputPath);
+        logger.info("output path: " + outputPath);
+
+        if (args.length == 5) {
+            logger.info("simple mode");
             FileInputFormat.setInputPaths(job, new Path(inputPath));
             Path outPath = new Path(outputPath);
             FileOutputFormat.setOutputPath(job, outPath);
+            FileOutputFormat.setCompressOutput(job, true);
+
+            if ("snappy".equals(outputCompression.toLowerCase())) {
+                FileOutputFormat.setOutputCompressorClass(job, SnappyCodec.class);
+            } else {
+                FileOutputFormat.setOutputCompressorClass(job, GzipCodec.class);
+            }
 
             outPath.getFileSystem(conf).delete(outPath, true);
 
@@ -166,8 +190,8 @@ public class App extends Configured implements Tool {
             return job.waitForCompletion(true) ? 0 : 1;
 
         } else {
-            DateTime start = DateTime.parse(args[3]);
-            DateTime end = DateTime.parse(args[4]);
+            DateTime start = DateTime.parse(args[5]);
+            DateTime end = DateTime.parse(args[6]);
             boolean ok = true;
             DateTimeFormatter formatter = DateTimeFormat.forPattern("yyyyMMdd");
 
@@ -178,6 +202,13 @@ public class App extends Configured implements Tool {
                 FileInputFormat.setInputPaths(job, new Path(inputPath + "/part_time=" + key + "*/*"));
                 Path outPath = new Path(outputPath + "/part_time=" + key);
                 FileOutputFormat.setOutputPath(job, outPath);
+                FileOutputFormat.setCompressOutput(job, true);
+
+                if ("snappy".equals(outputCompression.toLowerCase())) {
+                    FileOutputFormat.setOutputCompressorClass(job, SnappyCodec.class);
+                } else {
+                    FileOutputFormat.setOutputCompressorClass(job, GzipCodec.class);
+                }
 
                 outPath.getFileSystem(conf).delete(outPath, true);
 
