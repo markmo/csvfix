@@ -35,13 +35,17 @@ public class App extends Configured implements Tool {
     protected static enum LineCounter {
         NUMBER_LINES,
         RECORDS_WITH_EMPTY_PROPS,
-        INVALID_COLUMN_COUNT
+        INVALID_COLUMN_COUNT,
+        INVALID_CUSTOMER_ID,
+        INVALID_EVENT_TYPE,
+        INVALID_TS
     }
 
     public static class MapTask extends Mapper<LongWritable, List<Text>, NullWritable, Text> {
 
         private static final String quote = "\"";
         private static final String delim = ",";
+        private static final String UNKNOWN = "UNKNOWN";
 
         private Text text = new Text();
         private String[] strings = new String[11];
@@ -66,34 +70,95 @@ public class App extends Configured implements Tool {
          * 10 value
          */
         public void map(LongWritable key, List<Text> values, Context context) throws IOException, InterruptedException {
-            if (values.size() == 11) {
-                for (int i = 0; i < 11; i++) {
-                    strings[i] = values.get(i).toString();
-                }
-
-                String props = strings[5];
-                if (props != null && !props.isEmpty()) {
-                    String clean = props.replaceAll("\\\\n", "\\\\\\\\n");
-                    strings[5] = quoted(clean);
-                } else {
-                    context.getCounter(LineCounter.RECORDS_WITH_EMPTY_PROPS).increment(1);
-                }
-                props = null;
-
-                String value = strings[10];
-                if (value != null && !value.isEmpty()) {
-                    strings[10] = quoted(value);
-                }
-                value = null;
-
-                context.getCounter(LineCounter.NUMBER_LINES).increment(1);
-
-                context.write(NullWritable.get(), join(strings));
-
-            } else {
+            // check valid number of columns
+            if (values.size() != 11) {
                 context.getCounter(LineCounter.INVALID_COLUMN_COUNT).increment(1);
                 logger.warn("Invalid record (" + values.size() + " columns): " + values);
+                return;
             }
+
+            for (int i = 0; i < 11; i++) {
+                strings[i] = values.get(i).toString();
+            }
+
+            // check valid customer id
+            String customerIdTypeId = strings[0];
+            if (customerIdTypeId == null || customerIdTypeId.isEmpty()) {
+                context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
+                return;
+            }
+            try {
+                int typeId = Integer.parseInt(customerIdTypeId);
+                if (typeId < 0) {
+                    context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
+                return;
+            }
+            customerIdTypeId = null;
+
+            String customerId = strings[1];
+            if (customerId == null || customerId.isEmpty() || UNKNOWN.equals(customerId)) {
+                context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
+                return;
+            }
+            customerId = null;
+
+            // check valid event type
+            String eventTypeId = strings[2];
+            if (eventTypeId == null || eventTypeId.isEmpty() || UNKNOWN.equals(eventTypeId)) {
+                context.getCounter(LineCounter.INVALID_EVENT_TYPE).increment(1);
+                return;
+            }
+            try {
+                int typeId = Integer.parseInt(eventTypeId);
+                if (typeId < 0) {
+                    context.getCounter(LineCounter.INVALID_EVENT_TYPE).increment(1);
+                    return;
+                }
+            } catch (NumberFormatException e) {
+                context.getCounter(LineCounter.INVALID_EVENT_TYPE).increment(1);
+                return;
+            }
+            eventTypeId = null;
+
+            // check valid time
+            String ts = strings[3];
+            if (ts == null || ts.isEmpty()) {
+                context.getCounter(LineCounter.INVALID_TS).increment(1);
+                return;
+            }
+            if (ts.startsWith("1970")) {
+                context.getCounter(LineCounter.INVALID_TS).increment(1);
+                return;
+            }
+            ts = null;
+
+            // clean props of newline characters
+            String props = strings[5];
+            if (props != null && !props.isEmpty()) {
+                String clean = props.replaceAll("\\\\n", "\\\\\\\\n");
+                strings[5] = quoted(clean);
+                clean = null;
+            } else {
+                context.getCounter(LineCounter.RECORDS_WITH_EMPTY_PROPS).increment(1);
+            }
+            props = null;
+
+            // source key is not used
+            strings[6] = "";
+
+            String value = strings[10];
+            if (value != null && !value.isEmpty()) {
+                strings[10] = quoted(value);
+            }
+            value = null;
+
+            context.getCounter(LineCounter.NUMBER_LINES).increment(1);
+
+            context.write(NullWritable.get(), join(strings));
         }
 
         private String quoted(String val) {
@@ -194,9 +259,10 @@ public class App extends Configured implements Tool {
             DateTime end = DateTime.parse(args[6]);
             boolean ok = true;
             DateTimeFormatter formatter = DateTimeFormat.forPattern("yyyyMMdd");
+            DateTime dt = start;
 
-            while (ok && start.isBefore(end)) {
-                String key = formatter.print(start);
+            while (ok && dt.isBefore(end)) {
+                String key = formatter.print(dt);
                 logger.info("Cleaning records for key: " + key);
 
                 FileInputFormat.setInputPaths(job, new Path(inputPath + "/part_time=" + key + "*/*"));
@@ -218,8 +284,9 @@ public class App extends Configured implements Tool {
 
                 logger.info("job done: " + ok);
 
-                start = start.plusDays(1);
+                dt = dt.plusDays(1);
             }
+            logger.info("Report for " + formatter.print(dt) + " to " + formatter.print(end));
 
             return ok ? 0 : 1;
         }
