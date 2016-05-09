@@ -11,6 +11,7 @@ import org.apache.hadoop.mapreduce.Mapper;
 import org.apache.hadoop.mapreduce.lib.input.CSVLineRecordReader;
 import org.apache.hadoop.mapreduce.lib.input.CSVNLineInputFormat;
 import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.input.InvalidInputException;
 import org.apache.hadoop.mapreduce.lib.map.MultithreadedMapper;
 import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
 import org.apache.hadoop.mapreduce.lib.output.TextOutputFormat;
@@ -81,28 +82,32 @@ public class App extends Configured implements Tool {
                 strings[i] = values.get(i).toString();
             }
 
+            // let invalid customer ids through
+            // they might be resolved later using a session id
+
             // check valid customer id
             String customerIdTypeId = strings[0];
             if (customerIdTypeId == null || customerIdTypeId.isEmpty()) {
                 context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
-                return;
-            }
-            try {
-                int typeId = Integer.parseInt(customerIdTypeId);
-                if (typeId < 0) {
+                //return;
+            } else {
+                try {
+                    int typeId = Integer.parseInt(customerIdTypeId);
+                    if (typeId < 0) {
+                        context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
+                        //return;
+                    }
+                } catch (NumberFormatException e) {
                     context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
-                    return;
+                    //return;
                 }
-            } catch (NumberFormatException e) {
-                context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
-                return;
             }
             customerIdTypeId = null;
 
             String customerId = strings[1];
             if (customerId == null || customerId.isEmpty() || UNKNOWN.equals(customerId)) {
                 context.getCounter(LineCounter.INVALID_CUSTOMER_ID).increment(1);
-                return;
+                //return;
             }
             customerId = null;
 
@@ -213,22 +218,6 @@ public class App extends Configured implements Tool {
 //        conf.set("mapreduce.map.java.opts", "-Xms256m -Xmx8g -XX:-UseConcMarkSweepGC -XX:-UseGCOverheadLimit");
 //        conf.set("mapreduce.map.memory.mb", "8192");
 
-        Job job = Job.getInstance(conf, "csvfix");
-        job.setJarByClass(App.class);
-        job.setNumReduceTasks(0);
-
-        MultithreadedMapper.setMapperClass(job, MapTask.class);
-        MultithreadedMapper.setNumberOfThreads(job, 8);
-        job.setMapperClass(MultithreadedMapper.class);
-
-//        job.setReducerClass(ReduceTask.class);
-//        job.setOutputKeyClass(Text.class);
-//        job.setOutputValueClass(LongWritable.class);
-
-        job.setInputFormatClass(CSVNLineInputFormat.class);
-
-        job.setOutputFormatClass(TextOutputFormat.class);
-
         String inputPath = args[3];
         String outputPath = args[4];
 
@@ -237,6 +226,22 @@ public class App extends Configured implements Tool {
 
         if (args.length == 5) {
             logger.info("simple mode");
+
+            Job job = Job.getInstance(conf, "csvfix");
+            job.setJarByClass(App.class);
+            job.setNumReduceTasks(0);
+
+            MultithreadedMapper.setMapperClass(job, MapTask.class);
+            MultithreadedMapper.setNumberOfThreads(job, 8);
+            job.setMapperClass(MultithreadedMapper.class);
+
+//            job.setReducerClass(ReduceTask.class);
+//            job.setOutputKeyClass(Text.class);
+//            job.setOutputValueClass(LongWritable.class);
+
+            job.setInputFormatClass(CSVNLineInputFormat.class);
+
+            job.setOutputFormatClass(TextOutputFormat.class);
             FileInputFormat.setInputPaths(job, new Path(inputPath));
             Path outPath = new Path(outputPath);
             FileOutputFormat.setOutputPath(job, outPath);
@@ -257,15 +262,42 @@ public class App extends Configured implements Tool {
         } else {
             DateTime start = DateTime.parse(args[5]);
             DateTime end = DateTime.parse(args[6]);
+            boolean byHour = "hour".equals(args[7]);
             boolean ok = true;
             DateTimeFormatter formatter = DateTimeFormat.forPattern("yyyyMMdd");
+            DateTimeFormatter hourFormatter = DateTimeFormat.forPattern("yyyyMMddHH");
             DateTime dt = start;
 
             while (ok && dt.isBefore(end)) {
-                String key = formatter.print(dt);
+                String key;
+                Path path;
+                if (byHour) {
+                    key = hourFormatter.print(dt);
+                    path = new Path(inputPath + "/part_time=" + key + "/*");
+                } else {
+                    key = formatter.print(dt);
+                    path = new Path(inputPath + "/part_time=" + key + "*/*");
+                }
+
                 logger.info("Cleaning records for key: " + key);
 
-                FileInputFormat.setInputPaths(job, new Path(inputPath + "/part_time=" + key + "*/*"));
+                Job job = Job.getInstance(conf, "csvfix_" + key);
+                job.setJarByClass(App.class);
+                job.setNumReduceTasks(0);
+
+                MultithreadedMapper.setMapperClass(job, MapTask.class);
+                MultithreadedMapper.setNumberOfThreads(job, 8);
+                job.setMapperClass(MultithreadedMapper.class);
+
+//                job.setReducerClass(ReduceTask.class);
+//                job.setOutputKeyClass(Text.class);
+//                job.setOutputValueClass(LongWritable.class);
+
+                job.setInputFormatClass(CSVNLineInputFormat.class);
+
+                job.setOutputFormatClass(TextOutputFormat.class);
+
+                FileInputFormat.setInputPaths(job, path);
                 Path outPath = new Path(outputPath + "/part_time=" + key);
                 FileOutputFormat.setOutputPath(job, outPath);
                 FileOutputFormat.setCompressOutput(job, true);
@@ -280,13 +312,22 @@ public class App extends Configured implements Tool {
 
                 logger.info("running job");
 
-                ok = job.waitForCompletion(true);
+                try {
+                    ok = job.waitForCompletion(true);
 
-                logger.info("job done: " + ok);
+                    logger.info("job done: " + ok);
 
-                dt = dt.plusDays(1);
+                } catch (InvalidInputException e) {
+                    logger.info("No records on " + key);
+                }
+
+                if (byHour) {
+                    dt = dt.plusHours(1);
+                } else {
+                    dt = dt.plusDays(1);
+                }
             }
-            logger.info("Report for " + formatter.print(dt) + " to " + formatter.print(end));
+            logger.info("Report for " + formatter.print(start) + " to " + formatter.print(end));
 
             return ok ? 0 : 1;
         }
