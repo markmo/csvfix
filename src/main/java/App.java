@@ -182,19 +182,6 @@ public class App extends Configured implements Tool {
         }
     }
 
-//    public static class ReduceTask extends Reducer<Text, LongWritable, Text, LongWritable> {
-//
-//        @Override
-//        protected void setup(Reducer<Text, LongWritable, Text, LongWritable>.Context context) throws IOException, InterruptedException {
-//            super.setup(context);
-//        }
-//
-//        @Override
-//        public void reduce(Text key, Iterable<LongWritable> values, Context context) throws IOException, InterruptedException {
-//
-//        }
-//    }
-
     public int run(String[] args) throws IOException, InterruptedException, ClassNotFoundException {
         logger.info("Starting job");
 
@@ -212,12 +199,6 @@ public class App extends Configured implements Tool {
         conf.set(CSVLineRecordReader.VALID_LINE_START_PATTERN, "-?\\d+,");
         conf.setInt(CSVLineRecordReader.EXPECTED_COLUMN_COUNT, 11);
 
-//        conf.setBoolean("mapreduce.map.output.compress", true);
-//        conf.set("mapreduce.map.output.compress.codec", "org.apache.hadoop.io.compress.SnappyCodec");
-//        conf.set("mapreduce.output.fileoutputformat.compress.codec", "org.apache.hadoop.io.compress.SnappyCodec");
-//        conf.set("mapreduce.map.java.opts", "-Xms256m -Xmx8g -XX:-UseConcMarkSweepGC -XX:-UseGCOverheadLimit");
-//        conf.set("mapreduce.map.memory.mb", "8192");
-
         String inputPath = args[3];
         String outputPath = args[4];
 
@@ -234,10 +215,6 @@ public class App extends Configured implements Tool {
             MultithreadedMapper.setMapperClass(job, MapTask.class);
             MultithreadedMapper.setNumberOfThreads(job, 8);
             job.setMapperClass(MultithreadedMapper.class);
-
-//            job.setReducerClass(ReduceTask.class);
-//            job.setOutputKeyClass(Text.class);
-//            job.setOutputValueClass(LongWritable.class);
 
             job.setInputFormatClass(CSVNLineInputFormat.class);
 
@@ -288,10 +265,6 @@ public class App extends Configured implements Tool {
                 MultithreadedMapper.setMapperClass(job, MapTask.class);
                 MultithreadedMapper.setNumberOfThreads(job, 8);
                 job.setMapperClass(MultithreadedMapper.class);
-
-//                job.setReducerClass(ReduceTask.class);
-//                job.setOutputKeyClass(Text.class);
-//                job.setOutputValueClass(LongWritable.class);
 
                 job.setInputFormatClass(CSVNLineInputFormat.class);
 
